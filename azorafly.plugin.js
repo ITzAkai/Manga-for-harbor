@@ -29,17 +29,14 @@ const PAGE_SIZE = 30;
 // postId cache per series slug (module-level; lives for the session).
 const postIdCache = {};
 
-function sleep(ms) {
-  // The sandbox may not provide setTimeout; degrade to no delay.
-  if (typeof setTimeout !== "function") return Promise.resolve();
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-// Retry wrapper: the origin 502/503s intermittently but recovers in seconds.
+// Retry wrapper: the origin 502/503s intermittently. Retries are IMMEDIATE -
+// no setTimeout/sleep - because plugin sandboxes may expose a setTimeout that
+// never fires, which would hang the whole source ("did not respond").
+// Failing fast is better: Harbor's own "Try again" button is the backoff.
 // Always uses responseType "text": with "json", harbor.http returns the parsed
 // value directly (no .ok/.status/.body), which breaks retry/error handling.
 async function httpRetry(url, tries) {
-  tries = tries || 4;
+  tries = tries || 3;
   let lastErr;
   for (let i = 0; i < tries; i++) {
     try {
@@ -51,7 +48,6 @@ async function httpRetry(url, tries) {
     } catch (e) {
       lastErr = e;
     }
-    await sleep(1500 * (i + 1));
   }
   throw lastErr || new Error("request failed: " + url);
 }
@@ -82,7 +78,7 @@ function postToSummary(p) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "1.0.1",
+  version: "1.0.2",
 
   // Latest-updated ordering, matching the site's own feed. tagId is a numeric
   // genre id (see tags()); the API filters server-side via genreIds.
