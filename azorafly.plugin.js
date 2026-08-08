@@ -66,19 +66,29 @@ async function getText(path) {
   return res.body;
 }
 
+// Series id embeds the numeric post id from the API: "1234~slug".
+// chapters() then needs NO main-site fetch (the API subdomain is the only
+// dependency). Old-format ids (bare slug) still work via fallbacks.
 function postToSummary(p) {
   if (!p || !p.slug) return null;
+  const nid = p.id != null ? String(p.id) : "";
   return {
-    id: p.slug,
+    id: nid ? nid + "~" + p.slug : p.slug,
     title: p.postTitle || p.slug,
     cover: p.featuredImage || undefined,
   };
 }
 
+// "1234~some-slug" -> {postId:"1234", slug:"some-slug"}; bare slug -> {slug}
+function splitId(id) {
+  const m = String(id).match(/^(\d+)~(.+)$/);
+  return m ? { postId: m[1], slug: m[2] } : { postId: null, slug: String(id) };
+}
+
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "1.0.2",
+  version: "1.1.0",
 
   // Latest-updated ordering, matching the site's own feed. tagId is a numeric
   // genre id (see tags()); the API filters server-side via genreIds.
@@ -110,17 +120,31 @@ const plugin = {
   },
 
   async detail(id) {
-    const html = await getText("/series/" + id);
+    const { postId, slug } = splitId(id);
+    if (postId) postIdCache[slug] = postId;
 
-    // Astro island props are HTML-entity-escaped JSON: &quot;key&quot;:[0,value]
+    const statusMap = {
+      ONGOING: "\u0645\u0633\u062a\u0645\u0631\u0629",
+      COMPLETED: "\u0645\u0643\u062a\u0645\u0644\u0629",
+      HIATUS: "\u0645\u062a\u0648\u0642\u0641\u0629",
+      DROPPED: "\u0645\u062a\u0631\u0648\u0643\u0629",
+      CANCELLED: "\u0645\u0644\u063a\u0627\u0629",
+    };
+
+    // Best effort: the main site gives description/status/cover, but the API
+    // subdomain is the only hard dependency, so a main-site failure must not
+    // kill detail entirely.
+    let html = "";
+    try {
+      html = await getText("/series/" + slug);
+    } catch (e) {
+      /* degrade to slug-derived basics below */
+    }
+
     const grab = (re) => {
       const m = html.match(re);
       return m ? m[1] : undefined;
     };
-
-    const postId = grab(/postId&quot;:\[0,(\d+)\]/);
-    if (postId) postIdCache[id] = postId;
-
     const og = (prop) => {
       const m = html.match(
         new RegExp('<meta property="og:' + prop + '" content="([^"]*)"')
@@ -128,7 +152,9 @@ const plugin = {
       return m ? m[1] : undefined;
     };
 
-    // og:description carries the synopsis as escaped HTML; strip tags/entities.
+    const foundPostId = grab(/postId&quot;:\[0,(\d+)\]/);
+    if (foundPostId) postIdCache[slug] = foundPostId;
+
     let description = og("description") || "";
     description = description
       .replace(/&lt;[^&]*&gt;|<[^>]*>/g, " ")
@@ -139,33 +165,13 @@ const plugin = {
       .trim();
 
     const statusRaw = grab(/seriesStatus&quot;:\[0,&quot;([^&]+)&quot;/);
-    const statusMap = {
-      ONGOING: "مستمرة",
-      COMPLETED: "مكتملة",
-      HIATUS: "متوقفة مؤقتاً",
-      DROPPED: "متروكة",
-      CANCELLED: "ملغاة",
-    };
-
-    // Cover: the query API has the real storage URL; og:image is a generated
-    // card. Prefer the API, fall back to og:image.
-    let cover;
-    try {
-      const q = await getJson(
-        "/api/query?perPage=5&searchTerm=" + encodeURIComponent(id)
-      );
-      const exact = (q.posts || []).find((p) => p.slug === id);
-      if (exact) cover = exact.featuredImage;
-    } catch (e) {
-      /* og fallback below */
-    }
-
-    const title = (og("title") || id).replace(/&amp;/g, "&");
+    const title =
+      (og("title") || slug.replace(/-/g, " ")).replace(/&amp;/g, "&");
 
     return {
       id,
       title,
-      cover: cover || og("image"),
+      cover: og("image"),
       description: description || undefined,
       status: statusRaw ? statusMap[statusRaw] || statusRaw : undefined,
       author: undefined, // the site does not expose an author field
@@ -173,40 +179,95 @@ const plugin = {
   },
 
   async chapters(id) {
-    // Need the numeric postId; use the cached one from detail() or fetch it.
-    let postId = postIdCache[id];
+    const { postId: embedded, slug } = splitId(id);
+
+    // Resolve the numeric postId. Priority: embedded in the id (set by
+    // popular/search from the API - no extra request), then the session
+    // cache, then a main-site fetch as a last resort for old bare-slug ids.
+    let postId = embedded || postIdCache[slug];
+    let html = "";
     if (!postId) {
-      const html = await getText("/series/" + id);
-      const m = html.match(/postId&quot;:\[0,(\d+)\]/);
-      if (!m) return [];
-      postId = m[1];
-      postIdCache[id] = postId;
+      try {
+        html = await getText("/series/" + slug);
+        const m = html.match(/postId&quot;:\[0,(\d+)\]/);
+        if (m) {
+          postId = m[1];
+          postIdCache[slug] = postId;
+        }
+      } catch (e) {
+        /* fall through to HTML fallback below */
+      }
     }
 
-    const data = await getJson(
-      "/api/chapters?postId=" + postId + "&skip=0&take=all&order=desc"
-    );
-    const list =
-      (data && data.post && data.post.chapters) || data.chapters || [];
+    // Route 1: the chapters API (full list, pure API subdomain).
+    if (postId) {
+      try {
+        const data = await getJson(
+          "/api/chapters?postId=" + postId + "&skip=0&take=all&order=desc"
+        );
+        const list =
+          (data && data.post && data.post.chapters) || data.chapters || [];
+        const chapters = list
+          .map((c) => {
+            if (!c || !c.slug) return null;
+            const locked = c.isAccessible === false;
+            return {
+              // pageUrls needs "series-slug/chapter-slug"
+              id: slug + "/" + c.slug,
+              chapter: String(c.number != null ? c.number : ""),
+              title:
+                (c.title && String(c.title).trim()) ||
+                "\u0627\u0644\u0641\u0635\u0644 " +
+                  c.number +
+                  (locked ? " \ud83d\udd12" : ""),
+              volume: null,
+              pages: 0,
+              language: "en",
+              publishAt: c.createdAt || undefined,
+            };
+          })
+          .filter(Boolean);
+        if (chapters.length) return chapters;
+      } catch (e) {
+        /* fall through to HTML fallback */
+      }
+    }
 
-    return list
-      .map((c) => {
-        if (!c || !c.slug) return null;
-        const locked = c.isAccessible === false;
-        return {
-          // pageUrls needs both slugs: "series-slug/chapter-slug"
-          id: id + "/" + c.slug,
-          chapter: String(c.number != null ? c.number : ""),
-          title:
-            (c.title && String(c.title).trim()) ||
-            "الفصل " + c.number + (locked ? " 🔒" : ""),
-          volume: null,
-          pages: 0,
-          language: "en",
-          publishAt: c.createdAt || undefined,
-        };
-      })
-      .filter(Boolean);
+    // Route 2: parse SSR'd chapter anchors from the series page. Partial
+    // (the page renders only recent chapters) but better than nothing.
+    if (!html) {
+      try {
+        html = await getText("/series/" + slug);
+      } catch (e) {
+        return [];
+      }
+    }
+    const seen = {};
+    const out = [];
+    const re = new RegExp(
+      'href="/series/[^"]+/(chapter-[^"/]+)"[\\s\\S]{0,2000}?(?:datetime="([^"]+)")?',
+      "g"
+    );
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const chSlug = m[1];
+      if (seen[chSlug]) continue;
+      seen[chSlug] = true;
+      const numM = chSlug.match(/chapter-([\d.-]+)/);
+      out.push({
+        id: slug + "/" + chSlug,
+        chapter: numM ? numM[1].replace(/-/g, ".") : "",
+        title: "\u0627\u0644\u0641\u0635\u0644 " + (numM ? numM[1] : chSlug),
+        volume: null,
+        pages: 0,
+        language: "en",
+        publishAt: m[2] || undefined,
+      });
+    }
+    out.sort(
+      (a, b) => (parseFloat(b.chapter) || 0) - (parseFloat(a.chapter) || 0)
+    );
+    return out;
   },
 
   // chapterId is "series-slug/chapter-slug".
