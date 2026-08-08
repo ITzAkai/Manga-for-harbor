@@ -20,6 +20,37 @@ async function getDoc(path) {
   return harbor.parseHtml(res.body);
 }
 
+// POST helper. Different harbor.http builds accept different option shapes,
+// so try each until one returns a body; throw only if all fail.
+async function postDoc(path, body) {
+  const url = BASE + path;
+  const shapes = [
+    {
+      method: "POST",
+      body: body,
+      responseType: "text",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    },
+    { method: "POST", body: body, responseType: "text" },
+    { method: "POST", data: body, responseType: "text" },
+    { method: "post", body: body, responseType: "text" },
+  ];
+  let lastErr;
+  for (const opts of shapes) {
+    try {
+      const res = await harbor.http(url, opts);
+      if (res && res.ok && res.body) return harbor.parseHtml(res.body);
+      lastErr = new Error("http " + (res && res.status) + " for " + path);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("POST failed for " + path);
+}
+
 function abs(url) {
   if (!url) return undefined;
   url = url.trim();
@@ -162,81 +193,75 @@ const plugin = {
     };
   },
 
-  // The series page loads chapters via AJAX, so hit the Madara endpoint
-  // directly: POST /manga/{slug}/ajax/chapters/ returns the full list as HTML.
+  // Madara loads chapters via AJAX, not in the main /manga/ page HTML.
+  // Try the endpoints in order until one returns rows.
   async chapters(id) {
-    // The full chapter list ONLY exists behind POST /manga/{slug}/ajax/chapters/
-    // (no GET equivalent exists on this Madara build - verified). Different
-    // harbor.http builds accept different option shapes, so try them in order
-    // and validate each response actually contains chapters before using it.
-    const url = BASE + "/manga/" + id + "/ajax/chapters/";
-    const attempts = [
-      // 1. Explicit POST, no extra headers (the endpoint needs none).
-      { method: "POST", responseType: "text" },
-      // 2. POST with an empty body, in case the runtime requires one.
-      { method: "POST", body: "", responseType: "text" },
-      // 3. Uppercase-free variant, in case the option is case-sensitive.
-      { method: "post", responseType: "text" },
-    ];
+    const parseChapters = (doc) =>
+      doc
+        .querySelectorAll("li.wp-manga-chapter")
+        .map((li) => {
+          const a = li.querySelector("a");
+          if (!a) return null;
+          const chapId = chapterIdFromHref(a.attr("href"));
+          if (!chapId) return null;
 
-    let body = null;
-    for (const opts of attempts) {
-      try {
-        const res = await harbor.http(url, opts);
-        const text = res && res.ok ? res.body : null;
-        if (text && text.indexOf("wp-manga-chapter") !== -1) {
-          body = text;
-          break;
-        }
-      } catch (e) {
-        // Option shape not supported by this runtime; try the next one.
+          // Link text is like "1190 - title"; keep the leading number token.
+          const raw = (a.text() || "").trim();
+          const numMatch = raw.match(/(\d+(?:\.\d+)?)/);
+
+          // Date lives in .timediff (relative) or an <a title="..."> with the
+          // absolute date. The sibling .views span is NOT the date.
+          const rel = li.querySelector(".chapter-release-date .timediff");
+          const absDate = li.querySelector(".chapter-release-date a");
+          const date =
+            absDate?.attr("title")?.trim() || rel?.text()?.trim() || undefined;
+
+          return {
+            id: chapId,
+            chapter: numMatch ? numMatch[1] : raw,
+            title: raw,
+            volume: null,
+            pages: 0,
+            language: "en",
+            publishAt: date,
+          };
+        })
+        .filter(Boolean);
+
+    // 1) Modern Madara: POST to the manga page's ajax sub-path.
+    //    (Verified working on 3asq; returns the full list, newest first.)
+    try {
+      const doc = await postDoc("/manga/" + id + "/ajax/chapters/", "");
+      const ch = parseChapters(doc);
+      if (ch.length) return ch;
+    } catch (e) {
+      /* fall through */
+    }
+
+    // 2) Older Madara: admin-ajax with action=manga_get_chapters.
+    //    Needs the numeric post id, read from the page. (Disabled on 3asq -
+    //    returns 400 - but kept for portability to other Madara sites.)
+    try {
+      const page = await getDoc("/manga/" + id + "/");
+      const dataId =
+        page.querySelector(".rating-post-id")?.attr("value") ||
+        page.querySelector("#manga-chapters-holder")?.attr("data-id") ||
+        page.querySelector("input.rating-post-id")?.attr("value");
+      if (dataId) {
+        const body =
+          "action=manga_get_chapters&manga=" + encodeURIComponent(dataId);
+        const doc = await postDoc("/wp-admin/admin-ajax.php", body);
+        const ch = parseChapters(doc);
+        if (ch.length) return ch;
       }
+    } catch (e) {
+      /* fall through */
     }
 
-    if (!body) {
-      // Every POST attempt failed: this Harbor build cannot send POST
-      // requests, and 3asq offers no GET route to the chapter list.
-      // Return empty rather than junk.
-      return [];
-    }
-
-    const doc = harbor.parseHtml(body);
-
-    const chapters = doc
-      .querySelectorAll("li.wp-manga-chapter")
-      .map((li) => {
-        const a = li.querySelector("a");
-        if (!a) return null;
-        const chapId = chapterIdFromHref(a.attr("href"));
-        if (!chapId) return null;
-
-        // Link text is like "1190 - title" or "0chapter - title"; keep the
-        // leading number token as the chapter number.
-        const raw = (a.text() || "").trim();
-        const numMatch = raw.match(/(\d+(?:\.\d+)?)/);
-
-        // Date lives in .timediff (relative) or, on some rows, an <a title="...">
-        // holding the absolute date. The sibling .views span is NOT the date,
-        // so never read the whole .chapter-release-date cell.
-        const rel = li.querySelector(".chapter-release-date .timediff");
-        const absDate = li.querySelector(".chapter-release-date a");
-        const date =
-          absDate?.attr("title")?.trim() || rel?.text()?.trim() || undefined;
-
-        return {
-          id: chapId,
-          chapter: numMatch ? numMatch[1] : raw,
-          title: raw,
-          volume: null,
-          pages: 0,
-          language: "en",
-          publishAt: date || undefined,
-        };
-      })
-      .filter(Boolean);
-
-    // Endpoint returns newest-first already; keep that order.
-    return chapters;
+    // 3) Last resort: chapters already inline in the main page HTML.
+    //    (Empty on 3asq's Madara build, but harmless and free to check.)
+    const doc = await getDoc("/manga/" + id + "/");
+    return parseChapters(doc);
   },
 
   // chapterId is "slug/number"; reader images are plain <img> in .reading-content.
