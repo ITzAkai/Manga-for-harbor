@@ -72,8 +72,9 @@ function bsToSummary(el) {
 }
 
 const plugin = {
-  id: "team-x",
+  id: "olympustaff",
   name: "Team-X",
+  version: "1.2.1",
 
   // Homepage: 40 items/page. Genre-filtered /series listing: 10 items/page.
   async popular(offset, tagId) {
@@ -170,7 +171,7 @@ const plugin = {
           title: card.querySelector(".chapter-title")?.text()?.trim(),
           volume: null,
           pages: 0,
-          language: "ar",
+          language: "en",
           publishAt: isNaN(ts)
             ? undefined
             : new Date(ts * 1000).toISOString(),
@@ -229,3 +230,5 @@ const plugin = {
       .filter(Boolean);
   },
 };
+
+return plugin;
