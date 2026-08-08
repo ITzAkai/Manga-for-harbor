@@ -2,7 +2,7 @@
 //
 // This is a Madara WordPress theme. All selectors + endpoints verified against
 // the live site (Aug 2026):
-//   - popular:  /manga/page/N/?m_orderby=views ; genre archive
+//   - popular:  /manga/page/N/?m_orderby=latest (latest-updated first) ; genre archive
 //               /manga-genre/{slug}/page/N/ when a tag filter is active
 //   - search:   /page/N/?s={query}&post_type=wp-manga (paginated)
 //   - detail:   /manga/{slug}/
@@ -101,7 +101,7 @@ function cardToSummary(el) {
 const plugin = {
   id: "3asq",
   name: "مانجا العاشق (3asq)",
-  version: "1.2.0",
+  version: "1.2.1",
 
   // Madara lists 21 items/page. Popular = order by views. When a genre tag is
   // active, use the genre archive (same card markup, same page size).
@@ -116,7 +116,7 @@ const plugin = {
     } else {
       path =
         (page > 1 ? "/manga/page/" + page + "/" : "/manga/") +
-        "?m_orderby=views";
+        "?m_orderby=latest";
     }
     const doc = await getDoc(path);
     return doc
