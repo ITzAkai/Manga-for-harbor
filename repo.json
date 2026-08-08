@@ -1,0 +1,14 @@
+{
+  "name": "Aiman's Manga Repo",
+  "plugins": [
+    {
+      "id": "team-x",
+      "name": "Team-X",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://olympustaff.com/images/TeamX.png",
+      "entry": "team-x.plugin.js"
+    }
+  ]
+}
