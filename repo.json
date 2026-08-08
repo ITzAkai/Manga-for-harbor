@@ -22,6 +22,37 @@
     {
       "id": "azorafly",
       "name": "AzoraFly",
+      "version": "1.0.2",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://azorafly.com/favicon.ico",
+      "entry": "azorafly.plugin.js"
+    }
+  ]
+}{
+  "name": "Arabic Scans",
+  "plugins": [
+    {
+      "id": "olympustaff",
+      "name": "Team-X",
+      "version": "1.2.1",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://olympustaff.com/images/TeamX.png",
+      "entry": "olympustaff.plugin.js"
+    },
+    {
+      "id": "3asq",
+      "name": "مانجا العاشق (3asq)",
+      "version": "1.2.1",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://3asq.online/wp-content/uploads/2021/06/cropped-ICON-270x270.png",
+      "entry": "3asq.plugin.js"
+    },
+    {
+      "id": "azorafly",
+      "name": "AzoraFly",
       "version": "1.0.1",
       "lang": "ar",
       "nsfw": false,
