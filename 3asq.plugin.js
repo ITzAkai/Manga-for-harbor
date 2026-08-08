@@ -229,7 +229,7 @@ const plugin = {
           title: raw,
           volume: null,
           pages: 0,
-          language: "ar",
+          language: "en",
           publishAt: date || undefined,
         };
       })
