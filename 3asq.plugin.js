@@ -101,6 +101,7 @@ function cardToSummary(el) {
 const plugin = {
   id: "3asq",
   name: "مانجا العاشق (3asq)",
+  version: "1.2.0",
 
   // Madara lists 21 items/page. Popular = order by views. When a genre tag is
   // active, use the genre archive (same card markup, same page size).
@@ -296,3 +297,5 @@ const plugin = {
     }));
   },
 };
+
+return plugin;
