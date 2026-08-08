@@ -52,8 +52,11 @@ function coverFrom(img) {
 }
 
 // A .page-item-detail card (browse + genre archive share this markup).
+// IMPORTANT: many cards put a translator-team badge <a> (external URL) BEFORE
+// the manga link inside .post-title, so always filter anchors by /manga/ href.
 function cardToSummary(el) {
-  const a = el.querySelector(".post-title a") || el.querySelector("a");
+  const a = el.querySelector('.post-title a[href*="/manga/"]') ||
+    el.querySelector('a[href*="/manga/"]');
   if (!a) return null;
   const id = seriesIdFromHref(a.attr("href"));
   if (!id) return null;
@@ -103,11 +106,11 @@ const plugin = {
     return doc
       .querySelectorAll(".c-tabs-item__content")
       .map((el) => {
+        // Same badge trap as browse cards: only accept /manga/ links.
         const a =
-          el.querySelector(".post-title a") ||
-          el.querySelector("h3 a") ||
-          el.querySelector("h4 a") ||
-          el.querySelector(".tab-thumb a");
+          el.querySelector('.post-title a[href*="/manga/"]') ||
+          el.querySelector('.tab-thumb a[href*="/manga/"]') ||
+          el.querySelector('a[href*="/manga/"]');
         if (!a) return null;
         const id = seriesIdFromHref(a.attr("href"));
         if (!id) return null;
@@ -162,22 +165,42 @@ const plugin = {
   // The series page loads chapters via AJAX, so hit the Madara endpoint
   // directly: POST /manga/{slug}/ajax/chapters/ returns the full list as HTML.
   async chapters(id) {
-    const res = await harbor.http(
-      BASE + "/manga/" + id + "/ajax/chapters/",
-      {
-        method: "POST",
-        responseType: "text",
-        headers: { "X-Requested-With": "XMLHttpRequest" },
-      }
-    );
+    // The full chapter list ONLY exists behind POST /manga/{slug}/ajax/chapters/
+    // (no GET equivalent exists on this Madara build - verified). Different
+    // harbor.http builds accept different option shapes, so try them in order
+    // and validate each response actually contains chapters before using it.
+    const url = BASE + "/manga/" + id + "/ajax/chapters/";
+    const attempts = [
+      // 1. Explicit POST, no extra headers (the endpoint needs none).
+      { method: "POST", responseType: "text" },
+      // 2. POST with an empty body, in case the runtime requires one.
+      { method: "POST", body: "", responseType: "text" },
+      // 3. Uppercase-free variant, in case the option is case-sensitive.
+      { method: "post", responseType: "text" },
+    ];
 
-    let doc;
-    if (res && res.ok && res.body && res.body.indexOf("wp-manga-chapter") !== -1) {
-      doc = harbor.parseHtml(res.body);
-    } else {
-      // Fallback: some Madara builds still render chapters on the page.
-      doc = await getDoc("/manga/" + id + "/");
+    let body = null;
+    for (const opts of attempts) {
+      try {
+        const res = await harbor.http(url, opts);
+        const text = res && res.ok ? res.body : null;
+        if (text && text.indexOf("wp-manga-chapter") !== -1) {
+          body = text;
+          break;
+        }
+      } catch (e) {
+        // Option shape not supported by this runtime; try the next one.
+      }
     }
+
+    if (!body) {
+      // Every POST attempt failed: this Harbor build cannot send POST
+      // requests, and 3asq offers no GET route to the chapter list.
+      // Return empty rather than junk.
+      return [];
+    }
+
+    const doc = harbor.parseHtml(body);
 
     const chapters = doc
       .querySelectorAll("li.wp-manga-chapter")
