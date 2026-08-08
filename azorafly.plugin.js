@@ -30,16 +30,20 @@ const PAGE_SIZE = 30;
 const postIdCache = {};
 
 function sleep(ms) {
+  // The sandbox may not provide setTimeout; degrade to no delay.
+  if (typeof setTimeout !== "function") return Promise.resolve();
   return new Promise((r) => setTimeout(r, ms));
 }
 
 // Retry wrapper: the origin 502/503s intermittently but recovers in seconds.
-async function httpRetry(url, opts, tries) {
+// Always uses responseType "text": with "json", harbor.http returns the parsed
+// value directly (no .ok/.status/.body), which breaks retry/error handling.
+async function httpRetry(url, tries) {
   tries = tries || 4;
   let lastErr;
   for (let i = 0; i < tries; i++) {
     try {
-      const res = await harbor.http(url, opts);
+      const res = await harbor.http(url, { responseType: "text" });
       if (res && res.ok) return res;
       lastErr = new Error("http " + (res && res.status) + " for " + url);
       // 4xx will not fix itself; only retry server-side failures.
@@ -53,13 +57,16 @@ async function httpRetry(url, opts, tries) {
 }
 
 async function getJson(path) {
-  const res = await httpRetry(API + path, { responseType: "json" });
-  // Some runtimes give the parsed value directly, others wrap it in res.body.
-  return res && res.body !== undefined ? res.body : res;
+  const res = await httpRetry(API + path);
+  try {
+    return JSON.parse(res.body);
+  } catch (e) {
+    throw new Error("invalid json from " + path);
+  }
 }
 
 async function getText(path) {
-  const res = await httpRetry(BASE + path, { responseType: "text" });
+  const res = await httpRetry(BASE + path);
   return res.body;
 }
 
@@ -75,7 +82,7 @@ function postToSummary(p) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "1.0.0",
+  version: "1.0.1",
 
   // Latest-updated ordering, matching the site's own feed. tagId is a numeric
   // genre id (see tags()); the API filters server-side via genreIds.
@@ -230,7 +237,7 @@ const plugin = {
 
   // Genre map extracted from the browse page's island props (id + name pairs).
   async tags() {
-    const html = await getText("/series");
+    const html = await getText("/series/");
     const seen = {};
     const re =
       /\{&quot;id&quot;:\[0,(\d+)\],&quot;name&quot;:\[0,&quot;([^&]+)&quot;\]/g;
