@@ -18,6 +18,15 @@
       "nsfw": false,
       "icon": "https://3asq.online/wp-content/uploads/2021/06/cropped-ICON-270x270.png",
       "entry": "3asq.plugin.js"
+    },
+    {
+      "id": "azorafly",
+      "name": "AzoraFly",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://azorafly.com/favicon.ico",
+      "entry": "azorafly.plugin.js"
     }
   ]
 }
