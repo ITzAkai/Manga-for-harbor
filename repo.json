@@ -4,7 +4,7 @@
     {
       "id": "olympustaff",
       "name": "Team-X",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "lang": "ar",
       "nsfw": false,
       "icon": "https://olympustaff.com/images/TeamX.png",
@@ -13,7 +13,7 @@
     {
       "id": "3asq",
       "name": "مانجا العاشق (3asq)",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "lang": "ar",
       "nsfw": false,
       "icon": "https://3asq.online/wp-content/uploads/2021/06/cropped-ICON-270x270.png",
@@ -22,11 +22,20 @@
     {
       "id": "azorafly",
       "name": "AzoraFly",
-      "version": "2.1.1",
+      "version": "2.1.2",
       "lang": "ar",
       "nsfw": false,
       "icon": "https://azorafly.com/favicon.ico",
       "entry": "azorafly.plugin.js"
+    },
+    {
+      "id": "manga-online-ar",
+      "name": "مانجا اون لاين",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://onma.me/favicon.ico",
+      "entry": "manga-online-ar.plugin.js"
     }
   ]
 }
