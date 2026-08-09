@@ -117,11 +117,15 @@ async function listVia(queryString, htmlPath) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "2.0.3",
+  version: "2.1.0",
 
   async popular(offset, tagId) {
     const page = Math.floor(offset / 30) + 1;
-    let q = "perPage=30&page=" + page + "&orderBy=latest";
+    // "updatedAt" = pure most-recently-updated order (matching the site's
+    // "\u0623\u062d\u062f\u062b \u0627\u0644\u0625\u0635\u062f\u0627\u0631\u0627\u062a"), without the pinned/featured
+    // series that the default "latest" ordering boosts to the top.
+    let q =
+      "perPage=30&page=" + page + "&orderBy=updatedAt&orderDirection=desc";
     if (tagId) q += "&genreIds=" + encodeURIComponent(tagId);
     return listVia(q, "/series?page=" + page);
   },
