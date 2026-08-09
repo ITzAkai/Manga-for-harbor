@@ -88,7 +88,7 @@ function splitId(id) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "1.1.0",
+  version: "1.1.2",
 
   // Latest-updated ordering, matching the site's own feed. tagId is a numeric
   // genre id (see tags()); the API filters server-side via genreIds.
@@ -270,22 +270,72 @@ const plugin = {
     return out;
   },
 
-  // chapterId is "series-slug/chapter-slug".
+  // chapterId is "series-slug/chapter-slug" - but Harbor builds may hand it
+  // back mangled (percent-encoded, prefixed with the numeric~ id, a full URL,
+  // or with the slash encoded), so normalize aggressively before splitting.
   async pageUrls(chapterId) {
-    const idx = chapterId.indexOf("/");
-    if (idx < 0) return [];
-    const seriesSlug = chapterId.slice(0, idx);
-    const chapterSlug = chapterId.slice(idx + 1);
+    let raw = String(chapterId || "");
 
-    const data = await getJson(
+    // Undo percent-encoding if present (%2F, %27, %7E ...).
+    if (/%[0-9a-fA-F]{2}/.test(raw)) {
+      try {
+        raw = decodeURIComponent(raw);
+      } catch (e) {
+        /* keep raw as-is */
+      }
+    }
+    // Full URL -> path.
+    raw = raw.replace(/^https?:\/\/[^/]+/i, "");
+    // Leading /series/ or bare leading slashes.
+    raw = raw.replace(/^\/+/, "").replace(/^series\//, "");
+    // Numeric id prefix ("1234~slug/chapter-x") -> drop the numeric part.
+    raw = raw.replace(/^\d+~/, "");
+
+    // Split on the LAST "chapter-" segment.
+    const m = raw.match(/^(.*?)\/(chapter-[^/]+)\/?$/);
+    let seriesSlug, chapterSlug;
+    if (m) {
+      seriesSlug = m[1];
+      chapterSlug = m[2];
+    } else {
+      // Slash lost entirely? Try "...slugchapter-x" style recovery.
+      const m2 = raw.match(/^(.*?)[\/_ ]?(chapter-[\d.-]+)\/?$/);
+      if (!m2) {
+        throw new Error("AZORA PAGES DIAG | unparseable chapterId=" +
+          JSON.stringify(String(chapterId)));
+      }
+      seriesSlug = m2[1].replace(/[\/_ ]+$/, "");
+      chapterSlug = m2[2];
+    }
+
+    const url =
+      API +
       "/api/chapter/content?mangaslug=" +
-        encodeURIComponent(seriesSlug) +
-        "&chapterslug=" +
-        encodeURIComponent(chapterSlug)
-    );
+      encodeURIComponent(seriesSlug) +
+      "&chapterslug=" +
+      encodeURIComponent(chapterSlug);
 
-    // Locked chapters return isAccessible:false with an empty images array;
-    // return [] and let Harbor show the chapter as having no pages.
+    let res;
+    try {
+      res = await harbor.http(url, { responseType: "text" });
+    } catch (e) {
+      throw new Error("AZORA PAGES DIAG | http threw: " + e.message +
+        " | slug=" + seriesSlug + " ch=" + chapterSlug);
+    }
+    if (!res || !res.ok || !res.body) {
+      throw new Error("AZORA PAGES DIAG | http status=" +
+        (res && res.status) + " | slug=" + seriesSlug + " ch=" + chapterSlug);
+    }
+
+    let data;
+    try {
+      data = JSON.parse(res.body);
+    } catch (e) {
+      throw new Error("AZORA PAGES DIAG | bad json: " +
+        res.body.slice(0, 80));
+    }
+
+    // Locked chapter: legitimately empty - no error, Harbor shows no pages.
     const images = (data && data.images) || [];
     return images
       .map((im) => (im && im.url ? im.url : typeof im === "string" ? im : null))
