@@ -27,15 +27,6 @@
       "nsfw": false,
       "icon": "https://azorafly.com/favicon.ico",
       "entry": "azorafly.plugin.js"
-    },
-    {
-      "id": "manga-online-ar",
-      "name": "مانجا اون لاين",
-      "version": "1.0.0",
-      "lang": "ar",
-      "nsfw": false,
-      "icon": "https://onma.me/favicon.ico",
-      "entry": "manga-online-ar.plugin.js"
     }
   ]
 }
