@@ -18,6 +18,7 @@ const BASE = "https://azorafly.com";
 const API = "https://api.azorafly.com";
 
 const postIdCache = {};
+const coverCache = {};
 
 async function fetchText(url) {
   let lastErr;
@@ -61,6 +62,7 @@ function summariesFromApi(data) {
     .map((p) => {
       if (!p || !p.slug) return null;
       if (p.id != null) postIdCache[p.slug] = String(p.id);
+      if (p.featuredImage) coverCache[p.slug] = p.featuredImage;
       return {
         id: p.slug,
         title: p.postTitle || p.slug,
@@ -79,10 +81,12 @@ function summariesFromHtml(html) {
       const slug = seriesSlugFromHref(a.attr("href"));
       if (!slug) return null;
       const img = a.querySelector("img");
+      const cover = abs(img?.attr("data-src") || img?.attr("src"));
+      if (cover) coverCache[slug] = cover;
       return {
         id: slug,
         title: (a.attr("title") || img?.attr("alt") || slug).trim(),
-        cover: abs(img?.attr("data-src") || img?.attr("src")),
+        cover: cover,
       };
     })
     .filter(Boolean);
@@ -113,7 +117,7 @@ async function listVia(queryString, htmlPath) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "2.0.0",
+  version: "2.0.1",
 
   async popular(offset, tagId) {
     const page = Math.floor(offset / 30) + 1;
@@ -173,10 +177,17 @@ const plugin = {
 
     const statusRaw = grab(/seriesStatus&quot;:\[0,&quot;([^&]+)&quot;/);
 
+    // The og:image is a generated share-card, not the real cover. Prefer the
+    // storage cover: session cache (from browse) -> the SERIES featured image
+    // in the page props -> og:image as last resort.
+    const propsCover = grab(
+      /featuredImage&quot;:\[0,&quot;(https:\/\/storage\.azorafly\.com\/[^&]*\/series\/featured\/[^&]+)&quot;/
+    );
+
     return {
       id,
       title: (og("title") || id.replace(/-/g, " ")).replace(/&amp;/g, "&"),
-      cover: og("image"),
+      cover: coverCache[id] || propsCover || og("image"),
       description: description || undefined,
       status: statusRaw ? statusMap[statusRaw] || statusRaw : undefined,
     };
