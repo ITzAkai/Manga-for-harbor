@@ -117,7 +117,7 @@ async function listVia(queryString, htmlPath) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "2.0.1",
+  version: "2.0.2",
 
   async popular(offset, tagId) {
     const page = Math.floor(offset / 30) + 1;
@@ -177,17 +177,50 @@ const plugin = {
 
     const statusRaw = grab(/seriesStatus&quot;:\[0,&quot;([^&]+)&quot;/);
 
-    // The og:image is a generated share-card, not the real cover. Prefer the
-    // storage cover: session cache (from browse) -> the SERIES featured image
-    // in the page props -> og:image as last resort.
-    const propsCover = grab(
-      /featuredImage&quot;:\[0,&quot;(https:\/\/storage\.azorafly\.com\/[^&]*\/series\/featured\/[^&]+)&quot;/
-    );
+    // The og:image is a generated share-card, not the real cover - and the
+    // page also contains OTHER series' covers (recommendations), so never
+    // take "the first storage URL". Resolve the cover in strict order:
+    // 1) session cache from browse/search (always correct)
+    // 2) the featuredImage inside THIS series' own props object - anchored
+    //    to its slug so a recommendation card can never win
+    // 3) look the series up in the query API by its title, match the slug
+    // 4) og:image share-card as the absolute last resort
+    let cover = coverCache[id];
+
+    if (!cover) {
+      const esc = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const anchored = html.match(
+        new RegExp(
+          'slug&quot;:\\[0,&quot;' + esc + '&quot;\\][\\s\\S]{0,3000}?' +
+            'featuredImage&quot;:\\[0,&quot;' +
+            '(https:\\/\\/storage\\.azorafly\\.com\\/[^&]+)&quot;'
+        )
+      );
+      if (anchored) cover = anchored[1];
+    }
+
+    const title = (og("title") || id.replace(/-/g, " ")).replace(/&amp;/g, "&");
+
+    if (!cover && title) {
+      try {
+        const t = await fetchText(
+          BASE + "/api/query?perPage=20&searchTerm=" + encodeURIComponent(title)
+        );
+        const q = parseJson(t, "cover lookup");
+        const exact = (q.posts || []).find((p) => p.slug === id);
+        if (exact && exact.featuredImage) {
+          cover = exact.featuredImage;
+          coverCache[id] = cover;
+        }
+      } catch (e) {
+        /* og fallback below */
+      }
+    }
 
     return {
       id,
-      title: (og("title") || id.replace(/-/g, " ")).replace(/&amp;/g, "&"),
-      cover: coverCache[id] || propsCover || og("image"),
+      title,
+      cover: cover || og("image"),
       description: description || undefined,
       status: statusRaw ? statusMap[statusRaw] || statusRaw : undefined,
     };
