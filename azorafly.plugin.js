@@ -66,20 +66,20 @@ async function getText(path) {
   return res.body;
 }
 
-// Series id embeds the numeric post id from the API: "1234~slug".
-// chapters() then needs NO main-site fetch (the API subdomain is the only
-// dependency). Old-format ids (bare slug) still work via fallbacks.
+// Series ids are the PLAIN slug (Harbor rejects ids with unusual chars).
+// The numeric post id the API gives us is stashed in the session cache as
+// browse/search render, so chapters() usually needs no extra request.
 function postToSummary(p) {
   if (!p || !p.slug) return null;
-  const nid = p.id != null ? String(p.id) : "";
+  if (p.id != null) postIdCache[p.slug] = String(p.id);
   return {
-    id: nid ? nid + "~" + p.slug : p.slug,
+    id: p.slug,
     title: p.postTitle || p.slug,
     cover: p.featuredImage || undefined,
   };
 }
 
-// "1234~some-slug" -> {postId:"1234", slug:"some-slug"}; bare slug -> {slug}
+// Accept both plain slugs and legacy "1234~slug" ids from old bookmarks.
 function splitId(id) {
   const m = String(id).match(/^(\d+)~(.+)$/);
   return m ? { postId: m[1], slug: m[2] } : { postId: null, slug: String(id) };
@@ -88,7 +88,7 @@ function splitId(id) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "1.1.2",
+  version: "1.1.3",
 
   // Latest-updated ordering, matching the site's own feed. tagId is a numeric
   // genre id (see tags()); the API filters server-side via genreIds.
