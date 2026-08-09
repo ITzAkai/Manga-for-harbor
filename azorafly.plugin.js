@@ -117,7 +117,7 @@ async function listVia(queryString, htmlPath) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "2.0.2",
+  version: "2.0.3",
 
   async popular(offset, tagId) {
     const page = Math.floor(offset / 30) + 1;
@@ -217,10 +217,18 @@ const plugin = {
       }
     }
 
+    // NEVER return the og share-card (/api/og-image/...) - if every real
+    // cover route failed, return no cover; Harbor will keep the browse-card
+    // image it already has. The plugin can no longer emit an og-image URL.
+    if (!cover) {
+      const ogImg = og("image");
+      if (ogImg && ogImg.indexOf("/api/og-image/") === -1) cover = ogImg;
+    }
+
     return {
       id,
       title,
-      cover: cover || og("image"),
+      cover: cover || undefined,
       description: description || undefined,
       status: statusRaw ? statusMap[statusRaw] || statusRaw : undefined,
     };
