@@ -88,11 +88,29 @@ function splitId(id) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "1.1.3",
+  version: "1.1.4",
 
   // Latest-updated ordering, matching the site's own feed. tagId is a numeric
   // genre id (see tags()); the API filters server-side via genreIds.
   async popular(offset, tagId) {
+    // ===== DIAGNOSTIC: shows exactly what Harbor's request receives =====
+    const url = API + "/api/query?perPage=5&orderBy=latest";
+    let msg;
+    try {
+      const res = await harbor.http(url, { responseType: "text" });
+      msg =
+        "ok=" + (res && res.ok) +
+        " status=" + (res && res.status) +
+        " len=" + (res && res.body ? res.body.length : 0) +
+        " body[0..100]=" +
+        (res && res.body ? res.body.slice(0, 100) : "(empty)");
+    } catch (e) {
+      msg = "harbor.http THREW: " + (e && e.message);
+    }
+    throw new Error("AZORA POPULAR DIAG | " + msg);
+  },
+
+  async popular_real(offset, tagId) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
     let path =
       "/api/query?perPage=" + PAGE_SIZE + "&page=" + page + "&orderBy=latest";
