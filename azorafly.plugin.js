@@ -117,15 +117,18 @@ async function listVia(queryString, htmlPath) {
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "2.1.0",
+  version: "2.1.1",
 
   async popular(offset, tagId) {
     const page = Math.floor(offset / 30) + 1;
     // "updatedAt" = pure most-recently-updated order (matching the site's
     // "\u0623\u062d\u062f\u062b \u0627\u0644\u0625\u0635\u062f\u0627\u0631\u0627\u062a"), without the pinned/featured
     // series that the default "latest" ordering boosts to the top.
+    // seriesType filter excludes NOVEL entries server-side (comics only).
     let q =
-      "perPage=30&page=" + page + "&orderBy=updatedAt&orderDirection=desc";
+      "perPage=30&page=" + page +
+      "&orderBy=updatedAt&orderDirection=desc" +
+      "&seriesType=MANHWA,MANHUA,MANGA";
     if (tagId) q += "&genreIds=" + encodeURIComponent(tagId);
     return listVia(q, "/series?page=" + page);
   },
@@ -133,7 +136,9 @@ const plugin = {
   async search(query, offset, tagId) {
     const page = Math.floor(offset / 30) + 1;
     let q =
-      "perPage=30&page=" + page + "&searchTerm=" + encodeURIComponent(query);
+      "perPage=30&page=" + page +
+      "&searchTerm=" + encodeURIComponent(query) +
+      "&seriesType=MANHWA,MANHUA,MANGA";
     if (tagId) q += "&genreIds=" + encodeURIComponent(tagId);
     // HTML fallback cannot really search (server ignores the param), so it
     // only fires if both API hosts fail - better a browse list than nothing.
