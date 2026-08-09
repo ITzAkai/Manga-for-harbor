@@ -1,49 +1,31 @@
-// Harbor manga source plugin: AzoraFly (azorafly.com)
+// Harbor manga source plugin: AzoraFly / AZORA MANGA (azorafly.com)  v2.0.0
 //
-// Astro-built site; browse/detail pages are server-rendered but chapters and
-// reader images come from an open JSON API. All endpoints verified (Aug 2026):
-//   - list/search: GET https://api.azorafly.com/api/query
-//       params: perPage, page, searchTerm, orderBy=latest, genreIds
-//       -> { posts: [{id, slug, postTitle, featuredImage, seriesType,
-//                     seriesStatus, genres[]}], totalCount }
-//   - chapters:    GET https://api.azorafly.com/api/chapters
-//       params: postId, skip=0, take=all, order=desc
-//       -> { post: { chapters: [{slug, number, title, createdAt, price,
-//                                isLocked, isAccessible}] }, totalChapterCount }
-//       (postId is read from the series page's astro-island props)
-//   - pages:       GET https://api.azorafly.com/api/chapter/content
-//       params: mangaslug, chapterslug
-//       -> { isAccessible, images: [{url, width, height}] }
-//   - detail meta: og: tags + island props on the series page
-//
-// The origin is flaky (intermittent 502/503), so every request retries.
-// Recent chapters are coin-locked server-side: the content API returns
-// isAccessible=false with no images for them. The plugin lists them (with
-// their real numbers/dates) but their pages are simply empty until the site
-// unlocks them - it does not and cannot bypass the lock.
+// Strategy: mirror what Harbor's JSON-config engine does (which the user
+// confirmed WORKS against this site), and use the api subdomain only where
+// it is the sole source of data, always with a main-domain fallback:
+//   - popular/search: main-domain /api/query (JSON on azorafly.com itself,
+//     verified live), falling back to parsing the /series HTML with the
+//     exact selectors the working JSON config uses.
+//   - detail: series page HTML (og: tags + island props).
+//   - chapters: api.azorafly.com full list -> fallback: main-domain page's
+//     SSR'd chapter anchors (recent ~20, same rows the JSON config reads).
+//   - pages: api.azorafly.com/api/chapter/content is the ONLY place page
+//     images exist (the reader HTML has none). If the subdomain is
+//     unreachable from this device, pages cannot work and the plugin says
+//     so explicitly instead of failing silently.
 
 const BASE = "https://azorafly.com";
 const API = "https://api.azorafly.com";
-const PAGE_SIZE = 30;
 
-// postId cache per series slug (module-level; lives for the session).
 const postIdCache = {};
 
-// Retry wrapper: the origin 502/503s intermittently. Retries are IMMEDIATE -
-// no setTimeout/sleep - because plugin sandboxes may expose a setTimeout that
-// never fires, which would hang the whole source ("did not respond").
-// Failing fast is better: Harbor's own "Try again" button is the backoff.
-// Always uses responseType "text": with "json", harbor.http returns the parsed
-// value directly (no .ok/.status/.body), which breaks retry/error handling.
-async function httpRetry(url, tries) {
-  tries = tries || 3;
+async function fetchText(url) {
   let lastErr;
-  for (let i = 0; i < tries; i++) {
+  for (let i = 0; i < 3; i++) {
     try {
       const res = await harbor.http(url, { responseType: "text" });
-      if (res && res.ok) return res;
+      if (res && res.ok && res.body) return res.body;
       lastErr = new Error("http " + (res && res.status) + " for " + url);
-      // 4xx will not fix itself; only retry server-side failures.
       if (res && res.status && res.status < 500) break;
     } catch (e) {
       lastErr = e;
@@ -52,95 +34,105 @@ async function httpRetry(url, tries) {
   throw lastErr || new Error("request failed: " + url);
 }
 
-async function getJson(path) {
-  const res = await httpRetry(API + path);
+function parseJson(text, where) {
   try {
-    return JSON.parse(res.body);
+    return JSON.parse(text);
   } catch (e) {
-    throw new Error("invalid json from " + path);
+    throw new Error("invalid json from " + where);
   }
 }
 
-async function getText(path) {
-  const res = await httpRetry(BASE + path);
-  return res.body;
+function abs(url) {
+  if (!url) return undefined;
+  url = String(url).trim();
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.indexOf("//") === 0) return "https:" + url;
+  if (url.indexOf("/") === 0) return BASE + url;
+  return BASE + "/" + url;
 }
 
-// Series ids are the PLAIN slug (Harbor rejects ids with unusual chars).
-// The numeric post id the API gives us is stashed in the session cache as
-// browse/search render, so chapters() usually needs no extra request.
-function postToSummary(p) {
-  if (!p || !p.slug) return null;
-  if (p.id != null) postIdCache[p.slug] = String(p.id);
-  return {
-    id: p.slug,
-    title: p.postTitle || p.slug,
-    cover: p.featuredImage || undefined,
-  };
+function seriesSlugFromHref(href) {
+  const m = String(href || "").match(/\/series\/([^/?#]+)\/?$/);
+  return m ? m[1] : null;
 }
 
-// Accept both plain slugs and legacy "1234~slug" ids from old bookmarks.
-function splitId(id) {
-  const m = String(id).match(/^(\d+)~(.+)$/);
-  return m ? { postId: m[1], slug: m[2] } : { postId: null, slug: String(id) };
+function summariesFromApi(data) {
+  return ((data && data.posts) || [])
+    .map((p) => {
+      if (!p || !p.slug) return null;
+      if (p.id != null) postIdCache[p.slug] = String(p.id);
+      return {
+        id: p.slug,
+        title: p.postTitle || p.slug,
+        cover: p.featuredImage || undefined,
+      };
+    })
+    .filter(Boolean);
+}
+
+// Fallback: parse a /series HTML listing with the JSON config's selectors.
+function summariesFromHtml(html) {
+  const doc = harbor.parseHtml(html);
+  return doc
+    .querySelectorAll("a.shrink-0[href^='/series/']")
+    .map((a) => {
+      const slug = seriesSlugFromHref(a.attr("href"));
+      if (!slug) return null;
+      const img = a.querySelector("img");
+      return {
+        id: slug,
+        title: (a.attr("title") || img?.attr("alt") || slug).trim(),
+        cover: abs(img?.attr("data-src") || img?.attr("src")),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function listVia(queryString, htmlPath) {
+  // 1) main-domain JSON API (verified working on azorafly.com itself)
+  try {
+    const t = await fetchText(BASE + "/api/query?" + queryString);
+    const out = summariesFromApi(parseJson(t, "/api/query"));
+    if (out.length) return out;
+  } catch (e) {
+    /* fall through */
+  }
+  // 2) api subdomain
+  try {
+    const t = await fetchText(API + "/api/query?" + queryString);
+    const out = summariesFromApi(parseJson(t, "api./api/query"));
+    if (out.length) return out;
+  } catch (e) {
+    /* fall through */
+  }
+  // 3) plain HTML listing - the path the JSON config proves works
+  const html = await fetchText(BASE + htmlPath);
+  return summariesFromHtml(html);
 }
 
 const plugin = {
   id: "azorafly",
   name: "AzoraFly",
-  version: "1.1.4",
+  version: "2.0.0",
 
-  // Latest-updated ordering, matching the site's own feed. tagId is a numeric
-  // genre id (see tags()); the API filters server-side via genreIds.
   async popular(offset, tagId) {
-    // ===== DIAGNOSTIC: shows exactly what Harbor's request receives =====
-    const url = API + "/api/query?perPage=5&orderBy=latest";
-    let msg;
-    try {
-      const res = await harbor.http(url, { responseType: "text" });
-      msg =
-        "ok=" + (res && res.ok) +
-        " status=" + (res && res.status) +
-        " len=" + (res && res.body ? res.body.length : 0) +
-        " body[0..100]=" +
-        (res && res.body ? res.body.slice(0, 100) : "(empty)");
-    } catch (e) {
-      msg = "harbor.http THREW: " + (e && e.message);
-    }
-    throw new Error("AZORA POPULAR DIAG | " + msg);
-  },
-
-  async popular_real(offset, tagId) {
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    let path =
-      "/api/query?perPage=" + PAGE_SIZE + "&page=" + page + "&orderBy=latest";
-    if (tagId) path += "&genreIds=" + encodeURIComponent(tagId);
-    const data = await getJson(path);
-    return (data && data.posts ? data.posts : [])
-      .map(postToSummary)
-      .filter(Boolean);
+    const page = Math.floor(offset / 30) + 1;
+    let q = "perPage=30&page=" + page + "&orderBy=latest";
+    if (tagId) q += "&genreIds=" + encodeURIComponent(tagId);
+    return listVia(q, "/series?page=" + page);
   },
 
   async search(query, offset, tagId) {
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    let path =
-      "/api/query?perPage=" +
-      PAGE_SIZE +
-      "&page=" +
-      page +
-      "&searchTerm=" +
-      encodeURIComponent(query);
-    if (tagId) path += "&genreIds=" + encodeURIComponent(tagId);
-    const data = await getJson(path);
-    return (data && data.posts ? data.posts : [])
-      .map(postToSummary)
-      .filter(Boolean);
+    const page = Math.floor(offset / 30) + 1;
+    let q =
+      "perPage=30&page=" + page + "&searchTerm=" + encodeURIComponent(query);
+    if (tagId) q += "&genreIds=" + encodeURIComponent(tagId);
+    // HTML fallback cannot really search (server ignores the param), so it
+    // only fires if both API hosts fail - better a browse list than nothing.
+    return listVia(q, "/series?page=" + page);
   },
 
   async detail(id) {
-    const { postId, slug } = splitId(id);
-    if (postId) postIdCache[slug] = postId;
-
     const statusMap = {
       ONGOING: "\u0645\u0633\u062a\u0645\u0631\u0629",
       COMPLETED: "\u0645\u0643\u062a\u0645\u0644\u0629",
@@ -149,14 +141,11 @@ const plugin = {
       CANCELLED: "\u0645\u0644\u063a\u0627\u0629",
     };
 
-    // Best effort: the main site gives description/status/cover, but the API
-    // subdomain is the only hard dependency, so a main-site failure must not
-    // kill detail entirely.
     let html = "";
     try {
-      html = await getText("/series/" + slug);
+      html = await fetchText(BASE + "/series/" + id);
     } catch (e) {
-      /* degrade to slug-derived basics below */
+      return { id, title: id.replace(/-/g, " ") };
     }
 
     const grab = (re) => {
@@ -171,7 +160,7 @@ const plugin = {
     };
 
     const foundPostId = grab(/postId&quot;:\[0,(\d+)\]/);
-    if (foundPostId) postIdCache[slug] = foundPostId;
+    if (foundPostId) postIdCache[id] = foundPostId;
 
     let description = og("description") || "";
     description = description
@@ -183,55 +172,47 @@ const plugin = {
       .trim();
 
     const statusRaw = grab(/seriesStatus&quot;:\[0,&quot;([^&]+)&quot;/);
-    const title =
-      (og("title") || slug.replace(/-/g, " ")).replace(/&amp;/g, "&");
 
     return {
       id,
-      title,
+      title: (og("title") || id.replace(/-/g, " ")).replace(/&amp;/g, "&"),
       cover: og("image"),
       description: description || undefined,
       status: statusRaw ? statusMap[statusRaw] || statusRaw : undefined,
-      author: undefined, // the site does not expose an author field
     };
   },
 
   async chapters(id) {
-    const { postId: embedded, slug } = splitId(id);
-
-    // Resolve the numeric postId. Priority: embedded in the id (set by
-    // popular/search from the API - no extra request), then the session
-    // cache, then a main-site fetch as a last resort for old bare-slug ids.
-    let postId = embedded || postIdCache[slug];
+    // postId: session cache (filled by browse/search) -> detail HTML.
+    let postId = postIdCache[id];
     let html = "";
     if (!postId) {
       try {
-        html = await getText("/series/" + slug);
+        html = await fetchText(BASE + "/series/" + id);
         const m = html.match(/postId&quot;:\[0,(\d+)\]/);
         if (m) {
           postId = m[1];
-          postIdCache[slug] = postId;
+          postIdCache[id] = postId;
         }
       } catch (e) {
-        /* fall through to HTML fallback below */
+        /* HTML fallback below will refetch if needed */
       }
     }
 
-    // Route 1: the chapters API (full list, pure API subdomain).
+    // Route 1: full list from the api subdomain.
     if (postId) {
       try {
-        const data = await getJson(
-          "/api/chapters?postId=" + postId + "&skip=0&take=all&order=desc"
+        const t = await fetchText(
+          API + "/api/chapters?postId=" + postId + "&skip=0&take=all&order=desc"
         );
-        const list =
-          (data && data.post && data.post.chapters) || data.chapters || [];
+        const data = parseJson(t, "/api/chapters");
+        const list = (data && data.post && data.post.chapters) || [];
         const chapters = list
           .map((c) => {
             if (!c || !c.slug) return null;
             const locked = c.isAccessible === false;
             return {
-              // pageUrls needs "series-slug/chapter-slug"
-              id: slug + "/" + c.slug,
+              id: id + "/" + c.slug,
               chapter: String(c.number != null ? c.number : ""),
               title:
                 (c.title && String(c.title).trim()) ||
@@ -247,135 +228,109 @@ const plugin = {
           .filter(Boolean);
         if (chapters.length) return chapters;
       } catch (e) {
-        /* fall through to HTML fallback */
+        /* fall through */
       }
     }
 
-    // Route 2: parse SSR'd chapter anchors from the series page. Partial
-    // (the page renders only recent chapters) but better than nothing.
+    // Route 2: SSR'd chapter anchors on the series page (recent ~20).
     if (!html) {
       try {
-        html = await getText("/series/" + slug);
+        html = await fetchText(BASE + "/series/" + id);
       } catch (e) {
         return [];
       }
     }
+    const doc = harbor.parseHtml(html);
     const seen = {};
     const out = [];
-    const re = new RegExp(
-      'href="/series/[^"]+/(chapter-[^"/]+)"[\\s\\S]{0,2000}?(?:datetime="([^"]+)")?',
-      "g"
-    );
-    let m;
-    while ((m = re.exec(html)) !== null) {
-      const chSlug = m[1];
-      if (seen[chSlug]) continue;
-      seen[chSlug] = true;
-      const numM = chSlug.match(/chapter-([\d.-]+)/);
+    doc.querySelectorAll("a[href*='/chapter-']").forEach((a) => {
+      const href = a.attr("href") || "";
+      const m = href.match(/\/(chapter-[^/?#]+)\/?$/);
+      if (!m || seen[m[1]]) return;
+      seen[m[1]] = true;
+      const numM = m[1].match(/chapter-([\d.-]+)/);
+      const time = a.querySelector("time");
       out.push({
-        id: slug + "/" + chSlug,
+        id: id + "/" + m[1],
         chapter: numM ? numM[1].replace(/-/g, ".") : "",
-        title: "\u0627\u0644\u0641\u0635\u0644 " + (numM ? numM[1] : chSlug),
+        title:
+          "\u0627\u0644\u0641\u0635\u0644 " + (numM ? numM[1] : m[1]),
         volume: null,
         pages: 0,
         language: "en",
-        publishAt: m[2] || undefined,
+        publishAt: time?.attr("datetime") || undefined,
       });
-    }
+    });
     out.sort(
       (a, b) => (parseFloat(b.chapter) || 0) - (parseFloat(a.chapter) || 0)
     );
     return out;
   },
 
-  // chapterId is "series-slug/chapter-slug" - but Harbor builds may hand it
-  // back mangled (percent-encoded, prefixed with the numeric~ id, a full URL,
-  // or with the slash encoded), so normalize aggressively before splitting.
   async pageUrls(chapterId) {
     let raw = String(chapterId || "");
-
-    // Undo percent-encoding if present (%2F, %27, %7E ...).
     if (/%[0-9a-fA-F]{2}/.test(raw)) {
       try {
         raw = decodeURIComponent(raw);
-      } catch (e) {
-        /* keep raw as-is */
-      }
+      } catch (e) {}
     }
-    // Full URL -> path.
-    raw = raw.replace(/^https?:\/\/[^/]+/i, "");
-    // Leading /series/ or bare leading slashes.
-    raw = raw.replace(/^\/+/, "").replace(/^series\//, "");
-    // Numeric id prefix ("1234~slug/chapter-x") -> drop the numeric part.
-    raw = raw.replace(/^\d+~/, "");
-
-    // Split on the LAST "chapter-" segment.
-    const m = raw.match(/^(.*?)\/(chapter-[^/]+)\/?$/);
-    let seriesSlug, chapterSlug;
-    if (m) {
-      seriesSlug = m[1];
-      chapterSlug = m[2];
-    } else {
-      // Slash lost entirely? Try "...slugchapter-x" style recovery.
-      const m2 = raw.match(/^(.*?)[\/_ ]?(chapter-[\d.-]+)\/?$/);
-      if (!m2) {
-        throw new Error("AZORA PAGES DIAG | unparseable chapterId=" +
-          JSON.stringify(String(chapterId)));
-      }
-      seriesSlug = m2[1].replace(/[\/_ ]+$/, "");
-      chapterSlug = m2[2];
+    raw = raw
+      .replace(/^https?:\/\/[^/]+/i, "")
+      .replace(/^\/+/, "")
+      .replace(/^series\//, "")
+      .replace(/^\d+~/, "");
+    const m =
+      raw.match(/^(.*?)\/(chapter-[^/]+)\/?$/) ||
+      raw.match(/^(.*?)[\/_ ]?(chapter-[\d.-]+)\/?$/);
+    if (!m) {
+      throw new Error(
+        "AZORA PAGES | unparseable chapterId=" + JSON.stringify(chapterId)
+      );
     }
-
-    const url =
-      API +
-      "/api/chapter/content?mangaslug=" +
+    const seriesSlug = m[1].replace(/[\/_ ]+$/, "");
+    const chapterSlug = m[2];
+    const qs =
+      "mangaslug=" +
       encodeURIComponent(seriesSlug) +
       "&chapterslug=" +
       encodeURIComponent(chapterSlug);
 
-    let res;
-    try {
-      res = await harbor.http(url, { responseType: "text" });
-    } catch (e) {
-      throw new Error("AZORA PAGES DIAG | http threw: " + e.message +
-        " | slug=" + seriesSlug + " ch=" + chapterSlug);
+    // The content endpoint exists ONLY on the api subdomain (main-domain
+    // route verified 404), but try both so a future proxy works automatically.
+    let lastErr;
+    for (const host of [API, BASE]) {
+      try {
+        const t = await fetchText(host + "/api/chapter/content?" + qs);
+        const data = parseJson(t, "chapter/content");
+        const images = (data && data.images) || [];
+        return images
+          .map((im) =>
+            im && im.url ? im.url : typeof im === "string" ? im : null
+          )
+          .filter(Boolean);
+      } catch (e) {
+        lastErr = e;
+      }
     }
-    if (!res || !res.ok || !res.body) {
-      throw new Error("AZORA PAGES DIAG | http status=" +
-        (res && res.status) + " | slug=" + seriesSlug + " ch=" + chapterSlug);
-    }
-
-    let data;
-    try {
-      data = JSON.parse(res.body);
-    } catch (e) {
-      throw new Error("AZORA PAGES DIAG | bad json: " +
-        res.body.slice(0, 80));
-    }
-
-    // Locked chapter: legitimately empty - no error, Harbor shows no pages.
-    const images = (data && data.images) || [];
-    return images
-      .map((im) => (im && im.url ? im.url : typeof im === "string" ? im : null))
-      .filter(Boolean);
+    throw new Error(
+      "AZORA PAGES | api.azorafly.com unreachable from this device: " +
+        (lastErr && lastErr.message)
+    );
   },
 
-  // Genre map extracted from the browse page's island props (id + name pairs).
   async tags() {
-    const html = await getText("/series/");
+    const html = await fetchText(BASE + "/series/");
     const seen = {};
     const re =
       /\{&quot;id&quot;:\[0,(\d+)\],&quot;name&quot;:\[0,&quot;([^&]+)&quot;\]/g;
     let m;
     while ((m = re.exec(html)) !== null) {
-      const gid = m[1];
-      const name = m[2].trim();
-      if (gid && name && !seen[gid]) seen[gid] = name;
+      if (m[1] && m[2] && !seen[m[1]]) seen[m[1]] = m[2].trim();
     }
     return Object.keys(seen).map((gid) => ({
       id: gid,
       name: seen[gid],
-      group: "التصنيف",
+      group: "\u0627\u0644\u062a\u0635\u0646\u064a\u0641",
     }));
   },
 };
