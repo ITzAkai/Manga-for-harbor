@@ -22,7 +22,7 @@ https://raw.githubusercontent.com/ITzAkai/Manga-for-harbor/refs/heads/main/repo.
 |---|---|---|---|
 | **Team-X** | [olympustaff.com](https://olympustaff.com) | العربية | Full chapter lists, genre filter, latest-updates browsing |
 | **مانجا العاشق (3asq)** | [3asq.online](https://3asq.online) | العربية | Madara-based; full chapter lists via AJAX, genre filter |
-| **AzoraFly** | [azorafly.com](https://azorafly.com) | العربية | API-driven; genre filter, latest-updates ordering |
+| **Azora** | [azorafly.com](https://azorafly.com) | العربية | API-driven; genre filter, latest-updates ordering |
 
 ## ✨ Features | المميزات
 
