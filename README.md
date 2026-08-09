@@ -1,8 +1,8 @@
-# Arabic Scans — Harbor Manga Repo
+# Arabic Scans — Harbor Manga Repo | مستودع مانجا عربي لتطبيق Harbor
 
-مستودع إضافات عربي لتطبيق **Harbor** يتيح تصفح وقراءة المانجا من مواقع الترجمة العربية.
+**Harbor manga sources for Arabic scanlation sites** — Team-X (olympustaff), مانجا العاشق (3asq), and AzoraFly (ازورا مانجا). Browse, search, and read Arabic manga, manhwa, and manhua with full chapter lists and genre filters.
 
-A plugin repository for the **Harbor** manga reader, providing Arabic scanlation sources.
+مستودع إضافات عربي لتطبيق **Harbor** لقراءة المانجا والمانهوا المترجمة للعربية — يدعم فرق Team-X ومانجا العاشق وازورا مانجا، مع قوائم فصول كاملة وبحث وتصنيفات.
 
 ## 📥 Installation | التثبيت
 
@@ -20,9 +20,9 @@ https://raw.githubusercontent.com/ITzAkai/Manga-for-harbor/refs/heads/main/repo.
 
 | Source | Site | Language | Notes |
 |---|---|---|---|
-| **Team-X** | [olympustaff.com](https://olympustaff.com) | العربية | Full chapter lists, latest-updates browsing |
+| **Team-X** | [olympustaff.com](https://olympustaff.com) | العربية | Full chapter lists, genre filter, latest-updates browsing |
 | **مانجا العاشق (3asq)** | [3asq.online](https://3asq.online) | العربية | Madara-based; full chapter lists via AJAX, genre filter |
-| **Azora** | [azorafly.com](https://azorafly.com) | العربية | API-driven; genre filter, latest-updates ordering |
+| **AzoraFly** | [azorafly.com](https://azorafly.com) | العربية | API-driven; genre filter, latest-updates ordering |
 
 ## ✨ Features | المميزات
 
