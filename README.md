@@ -57,4 +57,3 @@ These plugins only read **publicly accessible pages** from the listed scanlation
 
 ---
 
-Built with the help of Claude 🤖
